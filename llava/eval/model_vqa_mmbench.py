@@ -14,7 +14,7 @@ from llava.mm_utils import tokenizer_image_token, process_images, load_image_fro
 
 from PIL import Image
 import math
-
+from transformers import LogitsProcessorList, ContrastiveDecodingLogitsProcessor
 
 all_options = ['A', 'B', 'C', 'D']
 
@@ -104,6 +104,7 @@ def eval_model(args):
             prompt = conv.get_prompt()
 
             input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).cuda()
+            blind_input_ids = torch.tensor(tokenizer(prompt.replace("<image>", "")).input_ids, dtype=torch.long).unsqueeze(0).cuda()
 
             image_tensor = process_images([image], image_processor, model.config)[0]
             # image_tensor = image_processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
@@ -120,7 +121,15 @@ def eval_model(args):
                     num_beams=args.num_beams,
                     # no_repeat_ngram_size=3,
                     max_new_tokens=1024,
-                    use_cache=True)
+                    use_cache=True,
+                    logits_processor=LogitsProcessorList(
+                [ContrastiveDecodingLogitsProcessor(model=model, 
+                                                    unconditional_ids=blind_input_ids, 
+                                                    unconditional_attention_mask=torch.ones(blind_input_ids.shape, dtype=torch.long).cuda(), 
+                                                    beta=0.5,
+                                                    log_softmax=(args.num_beams > 1),
+                                                    )]),
+                    )
 
             input_token_len = input_ids.shape[1]
             n_diff_input_output = (input_ids != output_ids[:, :input_token_len]).sum().item()
